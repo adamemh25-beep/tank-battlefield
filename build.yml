@@ -1,0 +1,79 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Make icons
+        run: |
+          pip install pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          import math, os
+          os.makedirs('assets', exist_ok=True)
+          N = 1024
+          def bg(n):
+              im = Image.new('RGBA', (n, n))
+              d = ImageDraw.Draw(im)
+              for y in range(n):
+                  t = y / n
+                  d.line([(0, y), (n, y)], fill=(int(40 - 28 * t), int(46 - 32 * t), int(28 - 19 * t), 255))
+              for i in range(8):
+                  l = Image.new('RGBA', (n, n), (0, 0, 0, 0))
+                  ImageDraw.Draw(l).ellipse([n * (.1 + i * .04), n * (.6 + i * .03), n * (.9 - i * .04), n * (1.2 - i * .03)], fill=(230, 120, 40, 22))
+                  im = Image.alpha_composite(im, l)
+              return im
+          def tank(img, s, cx, cy):
+              d = ImageDraw.Draw(img)
+              ox, oy = cx - 590 * s, cy - 540 * s
+              P = lambda pts: [(ox + x * s, oy + y * s) for x, y in pts]
+              R = lambda a, b, c, e: [ox + a * s, oy + b * s, ox + c * s, oy + e * s]
+              d.rounded_rectangle(R(180, 590, 820, 700), radius=55 * s, fill=(38, 40, 30, 255))
+              for x in range(235, 800, 75):
+                  d.ellipse(R(x - 34, 611, x + 34, 679), fill=(96, 102, 74, 255))
+                  d.ellipse(R(x - 14, 631, x + 14, 659), fill=(50, 52, 38, 255))
+              d.polygon(P([(210, 600), (265, 520), (735, 520), (800, 600)]), fill=(178, 156, 106, 255))
+              d.polygon(P([(380, 520), (430, 435), (620, 435), (670, 520)]), fill=(160, 140, 94, 255))
+              d.rectangle(R(480, 412, 545, 438), fill=(52, 52, 42, 255))
+              d.rectangle(R(640, 462, 900, 486), fill=(52, 52, 42, 255))
+              d.rectangle(R(880, 452, 915, 496), fill=(52, 52, 42, 255))
+              d.line(P([(265, 520), (735, 520)]), fill=(214, 194, 144, 255), width=max(2, int(6 * s)))
+              def star(r1, r2, col):
+                  pts = [(950 + (r1 if i % 2 == 0 else r2) * math.cos(i * math.pi / 6), 474 + (r1 if i % 2 == 0 else r2) * math.sin(i * math.pi / 6)) for i in range(12)]
+                  d.polygon(P(pts), fill=col)
+              star(62, 26, (255, 170, 50, 255)); star(34, 14, (255, 240, 170, 255))
+          full = bg(N); tank(full, .88, 512, 520)
+          ImageDraw.Draw(full).rounded_rectangle([36, 36, N - 36, N - 36], radius=110, outline=(216, 166, 74, 255), width=16)
+          full.save('assets/icon-only.png')
+          fg = Image.new('RGBA', (N, N), (0, 0, 0, 0)); tank(fg, .62, 512, 512); fg.save('assets/icon-foreground.png')
+          bg(N).save('assets/icon-background.png')
+          PY
+      - name: Build Android project
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+          npm init -y
+          npm i three@0.128.0 @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/assets
+          cp node_modules/three/build/three.min.js www/three.min.js
+          npx cap init "Tank Battlefield" com.tankbattlefield.game --web-dir www
+          npx cap add android
+          npx capacitor-assets generate --android
+          sed -i 's/<activity/<activity android:screenOrientation="sensorLandscape"/' android/app/src/main/AndroidManifest.xml
+          sed -i '/<style name="AppTheme.NoActionBar"/a <item name="android:windowFullscreen">true</item>' android/app/src/main/res/values/styles.xml
+          npx cap sync android
+          cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TankBattlefield-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
